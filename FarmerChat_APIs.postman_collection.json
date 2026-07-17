@@ -1,0 +1,96 @@
+{
+  "info": {
+    "name": "FarmerChat APIs (Dev)",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "1. Initialize User",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "API-Key", "value": "{{FARMERCHAT_API_KEY}}" },
+          { "key": "Device-Info", "value": "%7B%22manufacturer%22%3A%22Postman%22%2C%22brand%22%3A%22Postman%22%2C%22model%22%3A%22TestClient%22%2C%22app_version_code%22%3A%2293%22%2C%22app_version%22%3A%224.0.0%22%2C%22androidId%22%3A%22device_1773060483133%22%7D" },
+          { "key": "Build-Version", "value": "v2" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"device_id\": \"device_1779357808208\",\n  \"latitude\": -0.4569,\n  \"longitude\": 39.6583\n}",
+          "options": { "raw": { "language": "json" } }
+        },
+        "url": {
+          "raw": "https://farmerchat.farmstack.co/mobile-app-dev/api/user/initialize_user/",
+          "protocol": "https",
+          "host": ["farmerchat", "farmstack", "co"],
+          "path": ["mobile-app-dev", "api", "user", "initialize_user", ""]
+        }
+      }
+    },
+    {
+      "name": "2. Set Preferred Language",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "Authorization", "value": "Bearer {{ACCESS_TOKEN}}" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"user_id\": \"{{USER_ID}}\",\n  \"language_id\": 1\n}",
+          "options": { "raw": { "language": "json" } }
+        },
+        "url": {
+          "raw": "https://farmerchat.farmstack.co/mobile-app-dev/api/user/set_preferred_language/",
+          "protocol": "https",
+          "host": ["farmerchat", "farmstack", "co"],
+          "path": ["mobile-app-dev", "api", "user", "set_preferred_language", ""]
+        }
+      }
+    },
+    {
+      "name": "3. New Conversation",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "Authorization", "value": "Bearer {{ACCESS_TOKEN}}" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"user_id\": \"{{USER_ID}}\"\n}",
+          "options": { "raw": { "language": "json" } }
+        },
+        "url": {
+          "raw": "https://farmerchat.farmstack.co/mobile-app-dev/api/chat/new_conversation/",
+          "protocol": "https",
+          "host": ["farmerchat", "farmstack", "co"],
+          "path": ["mobile-app-dev", "api", "chat", "new_conversation", ""]
+        }
+      }
+    },
+    {
+      "name": "4. Get Answer for Text Query",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "Authorization", "value": "Bearer {{ACCESS_TOKEN}}" },
+          { "key": "Device-info", "value": "%7B%22manufacturer%22%3A%22Postman%22%2C%22brand%22%3A%22Postman%22%2C%22model%22%3A%22TestClient%22%2C%22app_version_code%22%3A%22200%22%2C%22app_version%22%3A%222.0.0%22%2C%22androidId%22%3A%22device_1779357808208%22%7D" },
+          { "key": "Build-Version", "value": "v2" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"conversation_id\": \"{{CONVERSATION_ID}}\",\n  \"query\": \"What specific fertilisers are recommended for onion farming ?\",\n  \"input_type\": \"text\",\n  \"use_latest_prompt\": true,\n  \"triggered_input_type\": \"text\"\n}",
+          "options": { "raw": { "language": "json" } }
+        },
+        "url": {
+          "raw": "https://farmerchat.farmstack.co/mobile-app-dev/api/chat/get_answer_for_text_query/",
+          "protocol": "https",
+          "host": ["farmerchat", "farmstack", "co"],
+          "path": ["mobile-app-dev", "api", "chat", "get_answer_for_text_query", ""]
+        }
+      }
+    }
+  ]
+}
