@@ -38,6 +38,9 @@ class FarmerChatClient:
         self.user_id: str = ""
         self.conversation_id: str = ""
         self.session = requests.Session()
+        # Override to coordinate re-auth across parallel workers sharing one login
+        # (default: just re-logs in independently via initialize_user).
+        self.on_reauth = None
 
     # ------------------------------------------------------------------ #
 
@@ -86,20 +89,36 @@ class FarmerChatClient:
         resp.raise_for_status()
         return resp.json()
 
+    def _reauth(self) -> None:
+        """
+        Re-login with the same device_id — deterministically the same account, fresh token.
+        If on_reauth is set (coordinated parallel runs), delegate to it instead of logging in
+        independently, since concurrent independent logins to the same account can race.
+        """
+        if self.on_reauth:
+            self.on_reauth(self)
+        else:
+            self.initialize_user()
+            self.set_language()
+
     def new_conversation(self) -> dict:
-        resp = self.session.post(
-            f"{BASE_URL}/api/chat/new_conversation/",
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {self.access_token}",
-            },
-            json={"user_id": self.user_id},
-            timeout=30,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        self.conversation_id = data.get("conversation_id") or data.get("id", "")
-        return data
+        for attempt in range(2):
+            resp = self.session.post(
+                f"{BASE_URL}/api/chat/new_conversation/",
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {self.access_token}",
+                },
+                json={"user_id": self.user_id},
+                timeout=30,
+            )
+            if resp.status_code == 401 and attempt == 0:
+                self._reauth()
+                continue
+            resp.raise_for_status()
+            data = resp.json()
+            self.conversation_id = data.get("conversation_id") or data.get("id", "")
+            return data
 
     def send_message(self, query: str, use_latest_prompt: bool = True, retry_on_empty: int = 1) -> dict:
         try:
@@ -115,24 +134,31 @@ class FarmerChatClient:
             return result
 
     def _send_message_once(self, query: str, use_latest_prompt: bool) -> dict:
-        resp = self.session.post(
-            f"{BASE_URL}/api/chat/get_answer_for_text_query_agentic/",
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {self.access_token}",
-                "Build-Version": BUILD_VERSION,
-            },
-            json={
-                "conversation_id": self.conversation_id,
-                "query": query,
-                "input_type": "text",
-                "use_latest_prompt": use_latest_prompt,
-                "triggered_input_type": "text",
-                "streaming_required": False,
-                "retry": False,
-            },
-            timeout=120,
-        )
+        for attempt in range(2):
+            resp = self.session.post(
+                f"{BASE_URL}/api/chat/get_answer_for_text_query_agentic/",
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {self.access_token}",
+                    "Build-Version": BUILD_VERSION,
+                },
+                json={
+                    "conversation_id": self.conversation_id,
+                    "query": query,
+                    "input_type": "text",
+                    "use_latest_prompt": use_latest_prompt,
+                    "triggered_input_type": "text",
+                    "streaming_required": False,
+                    "retry": False,
+                },
+                timeout=120,
+            )
+            if resp.status_code == 401 and attempt == 0:
+                # Re-auth only refreshes the token; conversation_id is server-side state keyed
+                # to the account, not the token, so the same conversation continues correctly.
+                self._reauth()
+                continue
+            break
         resp.raise_for_status()
 
         if not resp.content.strip():
