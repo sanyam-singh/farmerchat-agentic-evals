@@ -20,9 +20,13 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+import requests
+
 from parse_cases import load_all_cases
 from api_client import FarmerChatClient
 import langfuse_client
+
+NETWORK_ERRORS = (requests.exceptions.ConnectionError, requests.exceptions.Timeout)
 
 DEVICE_ID = "device_0001234545"
 
@@ -57,7 +61,29 @@ class SharedToken:
             return self.token, self.user_id
 
 
-def run_repeat(category, tc, repeat_idx, shared, with_langfuse=True):
+def run_repeat(category, tc, repeat_idx, shared, with_langfuse=True, max_attempts=2):
+    """Retries the whole repeat once on transient network errors (timeouts, connection resets) —
+    distinct from the empty-body/401 retries handled inside api_client, which are semantic, not
+    transport-level failures."""
+    last_result = None
+    for attempt in range(max_attempts):
+        try:
+            last_result = _run_repeat_once(category, tc, repeat_idx, shared, with_langfuse)
+        except NETWORK_ERRORS as e:
+            last_result = {
+                "category": category, "test_code": tc.test_code, "scenario": tc.scenario,
+                "difficulty": tc.difficulty, "expected_action": tc.expected_action,
+                "clarification_slots": tc.clarification_slots, "resolution_goal": tc.resolution_goal,
+                "notes": tc.notes, "repeat": repeat_idx, "status": "error",
+                "error": f"network error: {e}", "turns": [],
+            }
+        if last_result["status"] == "pass" or attempt == max_attempts - 1:
+            return last_result
+        time.sleep(3.0)
+    return last_result
+
+
+def _run_repeat_once(category, tc, repeat_idx, shared, with_langfuse=True):
     token, uid = shared.get()
     client = FarmerChatClient(DEVICE_ID)
     client.attach_session(token, uid)
@@ -77,6 +103,8 @@ def run_repeat(category, tc, repeat_idx, shared, with_langfuse=True):
 
     try:
         client.new_conversation()
+    except NETWORK_ERRORS:
+        raise  # let the outer retry-once-on-network-error wrapper handle it
     except Exception as e:
         return {**base, "status": "error", "error": f"new_conversation failed: {e}", "turns": []}
 
@@ -120,6 +148,8 @@ def run_repeat(category, tc, repeat_idx, shared, with_langfuse=True):
                 "detected_commodities": md.get("detected_commodities"),
                 "alignment_decision": md.get("alignment_decision"),
             })
+    except NETWORK_ERRORS:
+        raise  # let the outer retry-once-on-network-error wrapper handle it
     except Exception as e:
         return {**base, "status": "error", "error": str(e), "turns": turns_out}
 
