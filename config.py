@@ -31,20 +31,43 @@ DEFAULT_LAT = 25.0961
 DEFAULT_LON = 85.3131
 
 CSV_DIR = "/Users/sanyaamsingh/Downloads"
-CSV_FILES = {
-    "AMBG": f"{CSV_DIR}/English_Cases - AMBG.csv",
-    "BRED": f"{CSV_DIR}/English_Cases - BRED.csv",
-    "FLOW": f"{CSV_DIR}/English_Cases - FLOW.csv",
-    "GROW": f"{CSV_DIR}/English_Cases - GROW.csv",
-    "LVHL": f"{CSV_DIR}/English_Cases - LVHL.csv",
-    "LVNU": f"{CSV_DIR}/English_Cases - LVNU.csv",
-    "MRKT": f"{CSV_DIR}/English_Cases - MRKT.csv",
-    "NUTR": f"{CSV_DIR}/English_Cases - NUTR.csv",
-    "OOS":  f"{CSV_DIR}/English_Cases - OOS.csv",
-    "PEST": f"{CSV_DIR}/English_Cases - PEST.csv",
-    "SOIL": f"{CSV_DIR}/English_Cases - SOIL.csv",
-    "WATR": f"{CSV_DIR}/English_Cases - WATR.csv",
-    "WTHR": f"{CSV_DIR}/English_Cases - WTHR.csv",
+
+LANGUAGE_IDS = {"en": 1, "hi": 2}
+
+CSV_FILES_BY_LANG = {
+    "en": {
+        "AMBG": f"{CSV_DIR}/English_Cases - AMBG.csv",
+        "BRED": f"{CSV_DIR}/English_Cases - BRED.csv",
+        "FLOW": f"{CSV_DIR}/English_Cases - FLOW.csv",
+        "GROW": f"{CSV_DIR}/English_Cases - GROW.csv",
+        "LVHL": f"{CSV_DIR}/English_Cases - LVHL.csv",
+        "LVNU": f"{CSV_DIR}/English_Cases - LVNU.csv",
+        "MRKT": f"{CSV_DIR}/English_Cases - MRKT.csv",
+        "NUTR": f"{CSV_DIR}/English_Cases - NUTR.csv",
+        "OOS":  f"{CSV_DIR}/English_Cases - OOS.csv",
+        "PEST": f"{CSV_DIR}/English_Cases - PEST.csv",
+        "SOIL": f"{CSV_DIR}/English_Cases - SOIL.csv",
+        "WATR": f"{CSV_DIR}/English_Cases - WATR.csv",
+        "WTHR": f"{CSV_DIR}/English_Cases - WTHR.csv",
+    },
+    "hi": {
+        "AMBG": f"{CSV_DIR}/Hindi_Cases - AMBG.csv",
+        "BRED": f"{CSV_DIR}/Hindi_Cases - BRED.csv",
+        "GROW": f"{CSV_DIR}/Hindi_Cases - GROW.csv",
+        "LVHL": f"{CSV_DIR}/Hindi_Cases - LVHL.csv",
+        "LVNU": f"{CSV_DIR}/Hindi_Cases - LVNU.csv",
+        "MRKT": f"{CSV_DIR}/Hindi_Cases - MRKT.csv",
+        "NEW":  f"{CSV_DIR}/Hindi_Cases - NEW.csv",
+        "NUTR": f"{CSV_DIR}/Hindi_Cases - NUTR.csv",
+        "SOIL": f"{CSV_DIR}/Hindi_Cases - SOIL.csv",
+        "STOR": f"{CSV_DIR}/Hindi_Cases - STOR.csv",
+        "VARI": f"{CSV_DIR}/Hindi_Cases - VARI.csv",
+        "WTHR": f"{CSV_DIR}/Hindi_Cases - WTHR.csv",
+        "YELD": f"{CSV_DIR}/Hindi_Cases - YELD.csv",
+    },
 }
+
+# Back-compat defaults (English) for existing callers that import these directly.
+CSV_FILES = CSV_FILES_BY_LANG["en"]
 
 RESULTS_DIR = "./results"

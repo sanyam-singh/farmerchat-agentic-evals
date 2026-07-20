@@ -105,10 +105,11 @@ def parse_csv(category: str, filepath: str) -> list:
     return cases
 
 
-def load_all_cases() -> dict:
-    """Returns {category: [TestCase, ...]}"""
+def load_all_cases(csv_files: dict = None) -> dict:
+    """Returns {category: [TestCase, ...]}. Defaults to the English CSV set."""
+    csv_files = csv_files if csv_files is not None else CSV_FILES
     all_cases = {}
-    for category, filepath in CSV_FILES.items():
+    for category, filepath in csv_files.items():
         all_cases[category] = parse_csv(category, filepath)
         print(f"  Loaded {len(all_cases[category])} cases from {category}")
     return all_cases

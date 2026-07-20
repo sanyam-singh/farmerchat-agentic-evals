@@ -24,6 +24,7 @@ import requests
 
 from parse_cases import load_all_cases
 from api_client import FarmerChatClient
+from config import CSV_FILES_BY_LANG, LANGUAGE_IDS
 import langfuse_client
 
 NETWORK_ERRORS = (requests.exceptions.ConnectionError, requests.exceptions.Timeout)
@@ -34,8 +35,9 @@ DEVICE_ID = "device_0001234545"
 class SharedToken:
     """One shared login, refreshed under a lock so concurrent 401s don't cause a thundering herd of re-logins."""
 
-    def __init__(self, device_id):
+    def __init__(self, device_id, language_id):
         self.device_id = device_id
+        self.language_id = language_id
         self.token = None
         self.user_id = None
         self.lock = threading.Lock()
@@ -44,10 +46,10 @@ class SharedToken:
     def _login(self):
         c = FarmerChatClient(self.device_id)
         c.initialize_user()
-        c.set_language()
+        c.set_language(self.language_id)
         self.token = c.access_token
         self.user_id = c.user_id
-        print(f"(re)logged in, user_id={self.user_id}", flush=True)
+        print(f"(re)logged in, user_id={self.user_id}, language_id={self.language_id}", flush=True)
 
     def get(self):
         with self.lock:
@@ -87,6 +89,7 @@ def _run_repeat_once(category, tc, repeat_idx, shared, with_langfuse=True):
     token, uid = shared.get()
     client = FarmerChatClient(DEVICE_ID)
     client.attach_session(token, uid)
+    client.language_id = shared.language_id
 
     def coordinated_reauth(c):
         new_token, new_uid = shared.refresh_if_stale(c.access_token)
@@ -175,6 +178,7 @@ def build_work_items(all_cases, categories, repeats, resume_from):
 
 def main():
     parser = argparse.ArgumentParser(description="Parallel FarmerChat eval runner")
+    parser.add_argument("--lang", default="en", choices=list(CSV_FILES_BY_LANG.keys()), help="Language of test cases (default en)")
     parser.add_argument("--categories", nargs="+", help="Only these categories (default: all)")
     parser.add_argument("--repeats", type=int, default=3, help="Repeats per test case (default 3)")
     parser.add_argument("--workers", type=int, default=6, help="Concurrent worker threads (default 6)")
@@ -183,12 +187,12 @@ def main():
     parser.add_argument("--out", default="/tmp/parallel_results.jsonl", help="Output JSONL path")
     args = parser.parse_args()
 
-    all_cases = load_all_cases()
+    all_cases = load_all_cases(CSV_FILES_BY_LANG[args.lang])
     work_items = build_work_items(all_cases, args.categories, args.repeats, args.resume_from)
     total = len(work_items)
-    print(f"Total work items: {total}  (max_workers={args.workers})", flush=True)
+    print(f"Total work items: {total}  (max_workers={args.workers}, lang={args.lang})", flush=True)
 
-    shared = SharedToken(DEVICE_ID)
+    shared = SharedToken(DEVICE_ID, LANGUAGE_IDS[args.lang])
 
     lock = threading.Lock()
     done_count = 0

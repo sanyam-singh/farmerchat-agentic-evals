@@ -38,6 +38,7 @@ class FarmerChatClient:
         self.user_id: str = ""
         self.conversation_id: str = ""
         self.session = requests.Session()
+        self.language_id = LANGUAGE_ID
         # Override to coordinate re-auth across parallel workers sharing one login
         # (default: just re-logs in independently via initialize_user).
         self.on_reauth = None
@@ -76,14 +77,16 @@ class FarmerChatClient:
         self.user_id = data.get("user_id") or data.get("id", "")
         return data
 
-    def set_language(self) -> dict:
+    def set_language(self, language_id: int = None) -> dict:
+        if language_id is not None:
+            self.language_id = language_id
         resp = self.session.post(
             f"{BASE_URL}/api/user/set_preferred_language/",
             headers={
                 "Content-Type": "application/json",
                 "Authorization": f"Bearer {self.access_token}",
             },
-            json={"user_id": self.user_id, "language_id": LANGUAGE_ID},
+            json={"user_id": self.user_id, "language_id": self.language_id},
             timeout=30,
         )
         resp.raise_for_status()
