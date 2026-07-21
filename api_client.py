@@ -66,8 +66,8 @@ class FarmerChatClient:
             },
             json={
                 "device_id": self.device_id,
-                "latitude": lat,
-                "longitude": lon,
+                "lat": lat,
+                "long": lon,
             },
             timeout=30,
         )
