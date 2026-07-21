@@ -407,18 +407,19 @@ def call_agent(question, language_id=1):
     return resp.get("response") or clarify or resp.get("message") or ""
 
 
-def process_row(idx, row, openai_key, ft_only=False):
+def process_row(idx, row, openai_key, ft_only=False, agent_only=False):
     evaluator = FactEvaluator(openai_key)
     oai_client = openai.OpenAI(api_key=openai_key)
 
     result = {"sample_id": idx, "question": row["question"], "gt_facts": row["gt_facts"]}
 
-    try:
-        ft_raw = call_ft_model(oai_client, row["meta_question"])
-        result["ft_raw"] = ft_raw
-        result["ft_eval"] = evaluator.evaluate(ft_raw, row["gt_facts"], row["question"])
-    except Exception as e:
-        result["ft_error"] = str(e)
+    if not agent_only:
+        try:
+            ft_raw = call_ft_model(oai_client, row["meta_question"])
+            result["ft_raw"] = ft_raw
+            result["ft_eval"] = evaluator.evaluate(ft_raw, row["gt_facts"], row["question"])
+        except Exception as e:
+            result["ft_error"] = str(e)
 
     if ft_only:
         return result
@@ -440,6 +441,7 @@ def main():
     parser.add_argument("--sample", type=int, default=100)
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--ft-only", action="store_true", help="Skip the agent entirely (e.g. while FarmerChat staging is unreliable)")
+    parser.add_argument("--agent-only", action="store_true", help="Skip the FT model call, only run the agent side")
     parser.add_argument("--out", default="/tmp/benchmark_results.jsonl")
     args = parser.parse_args()
 
@@ -452,7 +454,7 @@ def main():
     t0 = time.time()
 
     with open(args.out, "w") as out, ThreadPoolExecutor(max_workers=args.workers) as ex:
-        futures = {ex.submit(process_row, i, row, openai_key, args.ft_only): i for i, row in enumerate(rows)}
+        futures = {ex.submit(process_row, i, row, openai_key, args.ft_only, args.agent_only): i for i, row in enumerate(rows)}
         for future in as_completed(futures):
             idx = futures[future]
             try:
