@@ -16,6 +16,7 @@ import json
 import re
 import threading
 import time
+import uuid
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -27,7 +28,6 @@ from api_client import FarmerChatClient
 TEST_PATH = "/Users/sanyaamsingh/Desktop/finalSFT/test.jsonl"
 FT_MODEL = "ft:gpt-4o-mini-2024-07-18:dgf-prod-dev-account:e4:Czgtay51"
 JUDGE_MODEL = "gpt-5.5"
-DEVICE_ID = "device_0001234545"
 
 SYSTEM_PROMPT = """
 You are an agricultural fact generator specialized in farming practices. Your task is to extract atomic, verifiable agricultural facts from the provided text and return them as a single, valid JSON object.
@@ -395,50 +395,19 @@ def call_ft_model(client, meta_question):
     return resp.choices[0].message.content
 
 
-class SharedAgentToken:
-    def __init__(self, device_id, language_id=1):
-        self.device_id = device_id
-        self.language_id = language_id
-        self.token = None
-        self.user_id = None
-        self.lock = threading.Lock()
-        self._login()
-
-    def _login(self):
-        c = FarmerChatClient(self.device_id)
-        c.initialize_user()
-        c.set_language(self.language_id)
-        self.token = c.access_token
-        self.user_id = c.user_id
-
-    def get(self):
-        with self.lock:
-            return self.token, self.user_id
-
-    def refresh_if_stale(self, stale_token):
-        with self.lock:
-            if self.token == stale_token:
-                self._login()
-            return self.token, self.user_id
-
-
-def call_agent(shared, question):
-    token, uid = shared.get()
-    client = FarmerChatClient(DEVICE_ID)
-    client.attach_session(token, uid)
-
-    def reauth(c):
-        t, u = shared.refresh_if_stale(c.access_token)
-        c.attach_session(t, u)
-
-    client.on_reauth = reauth
+def call_agent(question, language_id=1):
+    """Fresh account per call — no shared-token bottleneck, and no cross-question
+    conversation-history pollution (each account is used exactly once)."""
+    client = FarmerChatClient(f"device_bench_{uuid.uuid4().hex[:16]}")
+    client.initialize_user()
+    client.set_language(language_id)
     client.new_conversation()
     resp = client.send_message(question)
     clarify = resp.get("agentic_trace", {}).get("surface", {}).get("payload", {}).get("message")
     return resp.get("response") or clarify or resp.get("message") or ""
 
 
-def process_row(idx, row, openai_key, shared, ft_only=False):
+def process_row(idx, row, openai_key, ft_only=False):
     evaluator = FactEvaluator(openai_key)
     oai_client = openai.OpenAI(api_key=openai_key)
 
@@ -455,7 +424,7 @@ def process_row(idx, row, openai_key, shared, ft_only=False):
         return result
 
     try:
-        agent_raw = call_agent(shared, row["question"])
+        agent_raw = call_agent(row["question"])
         result["agent_raw"] = agent_raw
         agent_facts_json = evaluator.extract_facts_from_text(row["question"], agent_raw)
         result["agent_facts_json"] = agent_facts_json
@@ -478,17 +447,12 @@ def main():
     rows = load_test_set(TEST_PATH, sample=args.sample)
     print(f"Loaded {len(rows)} samples", flush=True)
 
-    shared = None
-    if not args.ft_only:
-        shared = SharedAgentToken(DEVICE_ID)
-        print(f"Agent logged in, user_id={shared.user_id}", flush=True)
-
     lock = threading.Lock()
     done = 0
     t0 = time.time()
 
     with open(args.out, "w") as out, ThreadPoolExecutor(max_workers=args.workers) as ex:
-        futures = {ex.submit(process_row, i, row, openai_key, shared, args.ft_only): i for i, row in enumerate(rows)}
+        futures = {ex.submit(process_row, i, row, openai_key, args.ft_only): i for i, row in enumerate(rows)}
         for future in as_completed(futures):
             idx = futures[future]
             try:

@@ -21,6 +21,7 @@ Usage:
 
 import argparse
 import json
+import random
 import threading
 import time
 import uuid
@@ -63,6 +64,7 @@ def run_repeat(category, tc, repeat_idx, language_id, with_langfuse=True, max_at
 
 
 def _run_repeat_once(category, tc, repeat_idx, language_id, with_langfuse=True):
+    time.sleep(random.uniform(0, 2.0))  # jitter to avoid a thundering herd of simultaneous initialize_user calls
     client = FarmerChatClient(make_device_id())
     client.initialize_user()
     client.set_language(language_id)
