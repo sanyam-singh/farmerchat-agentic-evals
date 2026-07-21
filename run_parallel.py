@@ -1,15 +1,20 @@
 """
 Parallel FarmerChat eval runner.
 
-Logs in once and shares that token across worker threads (avoids concurrent
-logins to the same account racing/invalidating each other's tokens), with
-coordinated re-authentication if the token expires mid-run.
+Creates a fresh, unique account (device_id) per test-case-repeat instead of
+sharing one login across workers. A field-name bug (latitude/longitude vs.
+the API's actual lat/long) previously made fresh accounts return empty
+bodies, which is why earlier versions of this script pooled one shared,
+heavily-reused account — that reuse caused its own problem (conversation
+history pollution degrading response quality over thousands of calls). With
+the bug fixed, fresh-per-call accounts avoid both issues and parallelize
+without any shared-state coordination.
 
 Usage:
   python run_parallel.py                                  # all categories, 3 repeats, 6 workers
   python run_parallel.py --categories NUTR PEST            # only these categories
   python run_parallel.py --repeats 1                       # single pass, no consistency repeats
-  python run_parallel.py --workers 4                       # lower concurrency
+  python run_parallel.py --workers 12                      # concurrency (no shared-account bottleneck now)
   python run_parallel.py --resume-from failed.json          # only re-run [category, test_code, repeat] tuples in this JSON file
   python run_parallel.py --out results/my_run.jsonl
 """
@@ -18,6 +23,7 @@ import argparse
 import json
 import threading
 import time
+import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests
@@ -29,48 +35,19 @@ import langfuse_client
 
 NETWORK_ERRORS = (requests.exceptions.ConnectionError, requests.exceptions.Timeout)
 
-DEVICE_ID = "device_0001234545"
+
+def make_device_id():
+    return f"device_eval_{uuid.uuid4().hex[:16]}"
 
 
-class SharedToken:
-    """One shared login, refreshed under a lock so concurrent 401s don't cause a thundering herd of re-logins."""
-
-    def __init__(self, device_id, language_id):
-        self.device_id = device_id
-        self.language_id = language_id
-        self.token = None
-        self.user_id = None
-        self.lock = threading.Lock()
-        self._login()
-
-    def _login(self):
-        c = FarmerChatClient(self.device_id)
-        c.initialize_user()
-        c.set_language(self.language_id)
-        self.token = c.access_token
-        self.user_id = c.user_id
-        print(f"(re)logged in, user_id={self.user_id}, language_id={self.language_id}", flush=True)
-
-    def get(self):
-        with self.lock:
-            return self.token, self.user_id
-
-    def refresh_if_stale(self, stale_token):
-        """Only re-logs in if no other thread already refreshed past stale_token."""
-        with self.lock:
-            if self.token == stale_token:
-                self._login()
-            return self.token, self.user_id
-
-
-def run_repeat(category, tc, repeat_idx, shared, with_langfuse=True, max_attempts=2):
+def run_repeat(category, tc, repeat_idx, language_id, with_langfuse=True, max_attempts=2):
     """Retries the whole repeat once on transient network errors (timeouts, connection resets) —
     distinct from the empty-body/401 retries handled inside api_client, which are semantic, not
     transport-level failures."""
     last_result = None
     for attempt in range(max_attempts):
         try:
-            last_result = _run_repeat_once(category, tc, repeat_idx, shared, with_langfuse)
+            last_result = _run_repeat_once(category, tc, repeat_idx, language_id, with_langfuse)
         except NETWORK_ERRORS as e:
             last_result = {
                 "category": category, "test_code": tc.test_code, "scenario": tc.scenario,
@@ -85,17 +62,10 @@ def run_repeat(category, tc, repeat_idx, shared, with_langfuse=True, max_attempt
     return last_result
 
 
-def _run_repeat_once(category, tc, repeat_idx, shared, with_langfuse=True):
-    token, uid = shared.get()
-    client = FarmerChatClient(DEVICE_ID)
-    client.attach_session(token, uid)
-    client.language_id = shared.language_id
-
-    def coordinated_reauth(c):
-        new_token, new_uid = shared.refresh_if_stale(c.access_token)
-        c.attach_session(new_token, new_uid)
-
-    client.on_reauth = coordinated_reauth
+def _run_repeat_once(category, tc, repeat_idx, language_id, with_langfuse=True):
+    client = FarmerChatClient(make_device_id())
+    client.initialize_user()
+    client.set_language(language_id)
 
     base = {
         "category": category, "test_code": tc.test_code, "scenario": tc.scenario,
@@ -181,7 +151,7 @@ def main():
     parser.add_argument("--lang", default="en", choices=list(CSV_FILES_BY_LANG.keys()), help="Language of test cases (default en)")
     parser.add_argument("--categories", nargs="+", help="Only these categories (default: all)")
     parser.add_argument("--repeats", type=int, default=3, help="Repeats per test case (default 3)")
-    parser.add_argument("--workers", type=int, default=6, help="Concurrent worker threads (default 6)")
+    parser.add_argument("--workers", type=int, default=12, help="Concurrent worker threads (default 12; no shared-account bottleneck)")
     parser.add_argument("--no-langfuse", action="store_true", help="Skip Langfuse trace lookup")
     parser.add_argument("--resume-from", help="JSON file of [category, test_code, repeat] tuples to re-run only")
     parser.add_argument("--out", default="/tmp/parallel_results.jsonl", help="Output JSONL path")
@@ -190,9 +160,8 @@ def main():
     all_cases = load_all_cases(CSV_FILES_BY_LANG[args.lang])
     work_items = build_work_items(all_cases, args.categories, args.repeats, args.resume_from)
     total = len(work_items)
+    language_id = LANGUAGE_IDS[args.lang]
     print(f"Total work items: {total}  (max_workers={args.workers}, lang={args.lang})", flush=True)
-
-    shared = SharedToken(DEVICE_ID, LANGUAGE_IDS[args.lang])
 
     lock = threading.Lock()
     done_count = 0
@@ -200,7 +169,7 @@ def main():
 
     with open(args.out, "w") as out, ThreadPoolExecutor(max_workers=args.workers) as executor:
         futures = {
-            executor.submit(run_repeat, cat, tc, i, shared, not args.no_langfuse): (cat, tc, i)
+            executor.submit(run_repeat, cat, tc, i, language_id, not args.no_langfuse): (cat, tc, i)
             for cat, tc, i in work_items
         }
         for future in as_completed(futures):
