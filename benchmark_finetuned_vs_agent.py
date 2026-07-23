@@ -21,6 +21,7 @@ from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import openai
+import requests
 
 from config import _secret
 from api_client import FarmerChatClient
@@ -123,6 +124,24 @@ class FactEvaluator:
     def __init__(self, openai_api_key):
         self._client = openai.OpenAI(api_key=openai_api_key)
 
+    def _create_with_retry(self, max_attempts=3, **kwargs):
+        """Retry on rate limits / transient network errors — at high worker counts these are
+        common, and a silent failure here just means a judge call returns a default 'no match'
+        instead of an actual answer, quietly degrading the eval rather than erroring loudly."""
+        last_exc = None
+        for attempt in range(max_attempts):
+            try:
+                return self._client.chat.completions.create(**kwargs)
+            except openai.RateLimitError as e:
+                last_exc = e
+                if attempt < max_attempts - 1:
+                    time.sleep(5.0 * (attempt + 1))
+            except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
+                last_exc = e
+                if attempt < max_attempts - 1:
+                    time.sleep(3.0)
+        raise last_exc
+
     def check_valid_json(self, predicted_facts):
         was_repaired = False
         try:
@@ -165,7 +184,7 @@ MALFORMED TEXT:
 {raw_text}
 """
         try:
-            resp = self._client.chat.completions.create(
+            resp = self._create_with_retry(
                 model="gpt-4o-mini",
                 messages=[
                     {"role": "system", "content": "You fix malformed JSON without altering its content. Respond ONLY with valid JSON."},
@@ -230,7 +249,7 @@ RESPOND WITH ONLY JSON:
 {{"best_match": "exact text of best matching candidate fact or null", "reason": "explanation", "confidence": 0.0-1.0}}
 """
         try:
-            resp = self._client.chat.completions.create(
+            resp = self._create_with_retry(
                 model=JUDGE_MODEL,
                 messages=[
                     {"role": "system", "content": "You are an expert agricultural fact comparison specialist. Respond ONLY with valid JSON."},
@@ -265,7 +284,7 @@ RESPOND WITH ONLY THIS JSON:
 If none, return {{"contradictions": []}}.
 """
         try:
-            resp = self._client.chat.completions.create(
+            resp = self._create_with_retry(
                 model=JUDGE_MODEL,
                 messages=[
                     {"role": "system", "content": "You are an expert agricultural contradiction detection specialist. Respond ONLY with valid JSON."},
@@ -289,7 +308,7 @@ RESPOND WITH ONLY THIS JSON:
 {{"overall_score": 0, "explanation": "short reason"}}
 """
         try:
-            resp = self._client.chat.completions.create(
+            resp = self._create_with_retry(
                 model=JUDGE_MODEL,
                 messages=[
                     {"role": "system", "content": "You are an expert agricultural fact evaluation specialist. Respond ONLY with valid JSON."},
@@ -376,7 +395,7 @@ RESPOND WITH ONLY THIS JSON:
             f"the question: {question}\n\nRESPONSE TEXT:\n{response_text}"
         )
         try:
-            resp = self._client.chat.completions.create(
+            resp = self._create_with_retry(
                 model=JUDGE_MODEL,
                 messages=[{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": user_msg}],
                 response_format={"type": "json_object"},
@@ -386,13 +405,25 @@ RESPOND WITH ONLY THIS JSON:
             return json.dumps({"facts": [], "error": str(e)})
 
 
-def call_ft_model(client, meta_question):
-    resp = client.chat.completions.create(
-        model=FT_MODEL,
-        messages=[{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": meta_question}],
-        temperature=0.0,
-    )
-    return resp.choices[0].message.content
+def call_ft_model(client, meta_question, max_attempts=3):
+    last_exc = None
+    for attempt in range(max_attempts):
+        try:
+            resp = client.chat.completions.create(
+                model=FT_MODEL,
+                messages=[{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": meta_question}],
+                temperature=0.0,
+            )
+            return resp.choices[0].message.content
+        except openai.RateLimitError as e:
+            last_exc = e
+            if attempt < max_attempts - 1:
+                time.sleep(5.0 * (attempt + 1))
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
+            last_exc = e
+            if attempt < max_attempts - 1:
+                time.sleep(3.0)
+    raise last_exc
 
 
 def call_agent(question, language_id=1):
@@ -405,6 +436,21 @@ def call_agent(question, language_id=1):
     resp = client.send_message(question)
     clarify = resp.get("agentic_trace", {}).get("surface", {}).get("payload", {}).get("message")
     return resp.get("response") or clarify or resp.get("message") or ""
+
+
+def call_agent_with_retry(question, language_id=1, max_attempts=3):
+    """Retries with a brand-new account each attempt (empty-body/network errors on one
+    account don't imply the next fresh one will fail too — this is distinct from the
+    single retry already inside send_message, which reuses the same account/conversation)."""
+    last_exc = None
+    for attempt in range(max_attempts):
+        try:
+            return call_agent(question, language_id)
+        except Exception as e:
+            last_exc = e
+            if attempt < max_attempts - 1:
+                time.sleep(3.0)
+    raise last_exc
 
 
 def process_row(idx, row, openai_key, ft_only=False, agent_only=False):
@@ -425,7 +471,7 @@ def process_row(idx, row, openai_key, ft_only=False, agent_only=False):
         return result
 
     try:
-        agent_raw = call_agent(row["question"])
+        agent_raw = call_agent_with_retry(row["question"])
         result["agent_raw"] = agent_raw
         agent_facts_json = evaluator.extract_facts_from_text(row["question"], agent_raw)
         result["agent_facts_json"] = agent_facts_json
