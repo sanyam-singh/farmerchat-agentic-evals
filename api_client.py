@@ -137,6 +137,7 @@ class FarmerChatClient:
             return result
 
     def _send_message_once(self, query: str, use_latest_prompt: bool) -> dict:
+        t0 = time.time()
         for attempt in range(2):
             resp = self.session.post(
                 f"{BASE_URL}/api/chat/get_answer_for_text_query_agentic/",
@@ -162,13 +163,25 @@ class FarmerChatClient:
                 self._reauth()
                 continue
             break
+        elapsed = time.time() - t0
         resp.raise_for_status()
 
         if not resp.content.strip():
+            interesting_headers = {
+                k: v for k, v in resp.headers.items()
+                if k.lower() in (
+                    "content-length", "content-type", "x-request-id", "request-id",
+                    "retry-after", "server", "via", "x-cache", "cf-ray", "x-amzn-requestid",
+                    "x-amzn-trace-id",
+                )
+            }
             raise EmptyResponseError(
-                "Agentic endpoint returned an empty body (200 OK). Seen intermittently even on "
-                "an allow-listed account — likely staging-side flakiness/rate-limiting rather "
-                "than a client bug."
+                "Agentic endpoint returned an empty body (200 OK) after "
+                f"{elapsed:.1f}s. status={resp.status_code} "
+                f"device_id={self.device_id} user_id={self.user_id} conversation_id={self.conversation_id} "
+                f"headers={interesting_headers or 'none of interest'}. "
+                "Seen intermittently even on a freshly-created account — likely staging-side "
+                "flakiness/rate-limiting rather than a client bug."
             )
 
         events = _parse_sse(resp.content.decode("utf-8"))

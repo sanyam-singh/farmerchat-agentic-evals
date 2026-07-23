@@ -30,32 +30,34 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import requests
 
 from parse_cases import load_all_cases
-from api_client import FarmerChatClient
+from api_client import FarmerChatClient, EmptyResponseError
 from config import CSV_FILES_BY_LANG, LANGUAGE_IDS
 import langfuse_client
 
 NETWORK_ERRORS = (requests.exceptions.ConnectionError, requests.exceptions.Timeout)
+RETRIABLE_ERRORS = NETWORK_ERRORS + (EmptyResponseError,)
 
 
 def make_device_id():
     return f"device_eval_{uuid.uuid4().hex[:16]}"
 
 
-def run_repeat(category, tc, repeat_idx, language_id, with_langfuse=True, max_attempts=2):
-    """Retries the whole repeat once on transient network errors (timeouts, connection resets) —
-    distinct from the empty-body/401 retries handled inside api_client, which are semantic, not
-    transport-level failures."""
+def run_repeat(category, tc, repeat_idx, language_id, with_langfuse=True, max_attempts=3):
+    """Retries the whole repeat on transient network errors AND empty-body responses — each
+    retry calls _run_repeat_once again, which creates an entirely new device_id -> user_id ->
+    conversation_id, not just a same-identity retry (that's handled once, cheaply, inside
+    api_client itself; this is the fresh-everything fallback for when that's not enough)."""
     last_result = None
     for attempt in range(max_attempts):
         try:
             last_result = _run_repeat_once(category, tc, repeat_idx, language_id, with_langfuse)
-        except NETWORK_ERRORS as e:
+        except RETRIABLE_ERRORS as e:
             last_result = {
                 "category": category, "test_code": tc.test_code, "scenario": tc.scenario,
                 "difficulty": tc.difficulty, "expected_action": tc.expected_action,
                 "clarification_slots": tc.clarification_slots, "resolution_goal": tc.resolution_goal,
                 "notes": tc.notes, "repeat": repeat_idx, "status": "error",
-                "error": f"network error: {e}", "turns": [],
+                "error": str(e), "turns": [],
             }
         if last_result["status"] == "pass" or attempt == max_attempts - 1:
             return last_result
@@ -78,8 +80,8 @@ def _run_repeat_once(category, tc, repeat_idx, language_id, with_langfuse=True):
 
     try:
         client.new_conversation()
-    except NETWORK_ERRORS:
-        raise  # let the outer retry-once-on-network-error wrapper handle it
+    except RETRIABLE_ERRORS:
+        raise  # let the outer retry-with-fresh-identity wrapper handle it
     except Exception as e:
         return {**base, "status": "error", "error": f"new_conversation failed: {e}", "turns": []}
 
@@ -123,8 +125,8 @@ def _run_repeat_once(category, tc, repeat_idx, language_id, with_langfuse=True):
                 "detected_commodities": md.get("detected_commodities"),
                 "alignment_decision": md.get("alignment_decision"),
             })
-    except NETWORK_ERRORS:
-        raise  # let the outer retry-once-on-network-error wrapper handle it
+    except RETRIABLE_ERRORS:
+        raise  # let the outer retry-with-fresh-identity wrapper handle it
     except Exception as e:
         return {**base, "status": "error", "error": str(e), "turns": turns_out}
 
