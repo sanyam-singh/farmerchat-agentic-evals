@@ -488,19 +488,29 @@ def main():
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--ft-only", action="store_true", help="Skip the agent entirely (e.g. while FarmerChat staging is unreliable)")
     parser.add_argument("--agent-only", action="store_true", help="Skip the FT model call, only run the agent side")
+    parser.add_argument("--sample-ids-file", help="JSON file with a list of exact sample_ids to run (indices into the full test set), instead of --sample's head-N selection")
     parser.add_argument("--out", default="/tmp/benchmark_results.jsonl")
     args = parser.parse_args()
 
     openai_key = _secret("OPENAI_API_KEY", "OPENAI_API_KEY")
-    rows = load_test_set(TEST_PATH, sample=args.sample)
-    print(f"Loaded {len(rows)} samples", flush=True)
+
+    if args.sample_ids_file:
+        with open(args.sample_ids_file) as f:
+            sample_ids = json.load(f)
+        all_rows = load_test_set(TEST_PATH, sample=None)
+        indexed_rows = [(i, all_rows[i]) for i in sample_ids]
+        print(f"Loaded {len(indexed_rows)} targeted samples out of {len(all_rows)} total", flush=True)
+    else:
+        rows = load_test_set(TEST_PATH, sample=args.sample)
+        indexed_rows = list(enumerate(rows))
+        print(f"Loaded {len(indexed_rows)} samples", flush=True)
 
     lock = threading.Lock()
     done = 0
     t0 = time.time()
 
     with open(args.out, "w") as out, ThreadPoolExecutor(max_workers=args.workers) as ex:
-        futures = {ex.submit(process_row, i, row, openai_key, args.ft_only, args.agent_only): i for i, row in enumerate(rows)}
+        futures = {ex.submit(process_row, i, row, openai_key, args.ft_only, args.agent_only): i for i, row in indexed_rows}
         for future in as_completed(futures):
             idx = futures[future]
             try:
@@ -512,8 +522,8 @@ def main():
                 out.flush()
                 done += 1
                 elapsed = time.time() - t0
-                eta = (elapsed / done) * (len(rows) - done)
-                print(f"[{done}/{len(rows)}] elapsed={elapsed/60:.1f}m eta={eta/60:.1f}m", flush=True)
+                eta = (elapsed / done) * (len(indexed_rows) - done)
+                print(f"[{done}/{len(indexed_rows)}] elapsed={elapsed/60:.1f}m eta={eta/60:.1f}m", flush=True)
 
     print("ALL DONE", flush=True)
 
