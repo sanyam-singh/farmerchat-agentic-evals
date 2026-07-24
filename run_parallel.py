@@ -117,6 +117,7 @@ def _run_repeat_once(category, tc, repeat_idx, language_id, with_langfuse=True):
                 "query": turn.text,
                 "response": actual_text,
                 "message_id": message_id,
+                "user_id": client.user_id,
                 "needed_retry": needed_retry,
                 "langfuse_found": lt is not None,
                 "span_name": lt["observation"]["name"] if lt else None,
