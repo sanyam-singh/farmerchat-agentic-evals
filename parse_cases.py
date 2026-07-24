@@ -93,10 +93,10 @@ def parse_csv(category: str, filepath: str) -> list:
                     expected_chips=row["Chips Name"].strip() or None,
                     correct_chip=row["Correct Tap (which chip)"].strip() or None,
                 ))
-            elif ua == "Tool Call" and conv:
+            elif ua == "Tool Call" and row["Tool Call"].strip():
                 current.turns.append(Turn(
                     role="tool_call",
-                    text=conv,
+                    text=row["Tool Call"].strip(),
                 ))
 
     if current:
