@@ -13,6 +13,7 @@ Usage:
 import argparse
 import ast
 import json
+import random
 import re
 import threading
 import time
@@ -429,6 +430,7 @@ def call_ft_model(client, meta_question, max_attempts=3):
 def call_agent(question, language_id=1):
     """Fresh account per call — no shared-token bottleneck, and no cross-question
     conversation-history pollution (each account is used exactly once)."""
+    time.sleep(random.uniform(0, 2.0))  # jitter to avoid a thundering herd of simultaneous initialize_user calls
     client = FarmerChatClient(f"device_bench_{uuid.uuid4().hex[:16]}")
     client.initialize_user()
     client.set_language(language_id)
@@ -449,7 +451,7 @@ def call_agent_with_retry(question, language_id=1, max_attempts=3):
         except Exception as e:
             last_exc = e
             if attempt < max_attempts - 1:
-                time.sleep(3.0)
+                time.sleep(random.uniform(2.0, 4.0))
     raise last_exc
 
 
